@@ -97,7 +97,20 @@ expect "slower than -w" 1 '^TFTP WARNING - download took [0-9.]+s, more than 0\.
 expect "slower than -c" 2 '^TFTP CRITICAL - download took [0-9.]+s, more than 0\.2s; got' FAKE_SLEEP=0.5 -- -w 0.1 -c 0.2
 expect "too small and slow" 2 '^TFTP CRITICAL - only 10 bytes, expected at least 100; download took [0-9.]+s, more than 0\.2s; got' \
 	FAKE_SIZE=10 FAKE_SLEEP=0.5 -- -s 100 -w 0.2
-expect "decimal comma locale" 0 '^TFTP OK - got pxelinux\.0 from localhost, 1000 bytes in [0-9]+\.[0-9]{3}s\|time=[0-9]+\.[0-9]{3}s;' LC_ALL=de_AT.UTF-8 --
+# a locale with a decimal comma, if one is installed
+COMMA_LOCALE=""
+for l in $(locale -a 2>/dev/null | grep -E '^(de|fr|it|es|nl|pt|ru)_'); do
+	if [[ $(LC_ALL=$l bash -c 'echo "$EPOCHREALTIME"' 2>/dev/null) == *,* ]]; then
+		COMMA_LOCALE=$l
+		break
+	fi
+done
+if [ -n "$COMMA_LOCALE" ]; then
+	expect "decimal comma locale $COMMA_LOCALE" 0 '^TFTP OK - got pxelinux\.0 from localhost, 1000 bytes in [0-9]+\.[0-9]{3}s\|time=[0-9]+\.[0-9]{3}s;' \
+		LC_ALL="$COMMA_LOCALE" --
+else
+	echo "skip decimal comma locale: none installed"
+fi
 
 expect "tftp missing" 3 '^TFTP UNKNOWN - tftp not found, install tftp-hpa$' PATH="$NO_TFTP" --
 expect "missing option argument" 3 '^TFTP UNKNOWN - option -H needs an argument$' -- -H
@@ -108,7 +121,7 @@ expect "bad port" 3 "^TFTP UNKNOWN - the port must be 1 to 65535, not '70000'$" 
 expect "bad timeout" 3 "^TFTP UNKNOWN - the timeout must be a positive number of seconds, not '0'$" -- -t 0
 expect "bad -w" 3 "^TFTP UNKNOWN - -w must be a number of seconds, not 'x'$" -- -w x
 expect "bad -s" 3 "^TFTP UNKNOWN - -s must be a number of bytes, not '1k'$" -- -s 1k
-expect "version" 3 '^check_tftp 0\.1$' -- -V
+expect "version" 3 '^check_tftp 0\.1\.1$' -- -V
 
 TESTS=$((TESTS + 1))
 if "$CHECK" -h | grep -q '^Usage: check_tftp'; then echo "ok   help"; else FAILURES=$((FAILURES + 1)); echo "FAIL help"; fi

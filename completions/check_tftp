@@ -1,0 +1,21 @@
+# bash completion for check_tftp                             -*- shell-script -*-
+
+_check_tftp()
+{
+    local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
+    COMPREPLY=()
+
+    case $prev in
+        -H)
+            mapfile -t COMPREPLY < <(compgen -A hostname -- "$cur")
+            return
+            ;;
+        -p | -f | -s | -w | -c | -t)
+            return
+            ;;
+    esac
+
+    # no positional arguments: offer the options
+    mapfile -t COMPREPLY < <(compgen -W '-H -p -4 -6 -f -s -w -c -t -V -h' -- "$cur")
+}
+complete -F _check_tftp check_tftp

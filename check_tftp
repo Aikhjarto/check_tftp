@@ -1,61 +1,179 @@
 #!/bin/bash
+# Nagios/Icinga plugin to check that a TFTP server serves a file.
 #
+# Copyright (C) 2015-2026 Thomas Wagner <wagner-thomas@gmx.at>
+# SPDX-License-Identifier: GPL-2.0-or-later
 
-# string for help text
-usage()
-{
-cat << EOF
-usage:
-This script reads a file from a tftp server. Returns OK, when file is found; return WARNING when file is not found but tftp server is up; return CRITICAL if tftp server is not reachable.
-OPTIONS:
- -h	Show this message
- -H	hostname (default localhost)
- -f	filename (default pxelinux.0)
-EOF
-}
+VERSION=0.1
 
-# nagios expects one of these as return values
+# a dot as the decimal separator of $EPOCHREALTIME and in the output
+export LC_ALL=C
+
 STATE_OK=0
 STATE_WARNING=1
 STATE_CRITICAL=2
 STATE_UNKNOWN=3
-STATE_DEPENDENT=4
 
-# set default values
 HOST="localhost"
+PORT=""
 FILE="pxelinux.0"
+TIMEOUT=10
+WARN_TIME=""
+CRIT_TIME=""
+MIN_SIZE=""
+IP_VERSION=""
 
-# override default values with input arguments
-while getopts ":hH:f:" OPTION
-do
-  case $OPTION in
-	h) usage
-	   exit $STATE_UNKNOWN # nothing checked, but feasible input
-	   ;;
-	H) HOST=$OPTARG
-	   ;;
-	f) FILE=$OPTARG
-	   ;;
-	?) echo "unknown parameter" 
-	   usage
-	   exit $STATE_UNKNOWN
- 	   ;;
-  esac
-done                                
+usage()
+{
+cat << EOF
+Usage: check_tftp [-H HOST] [-p PORT] [-4|-6] [-f FILE] [-s BYTES] [-w SECONDS] [-c SECONDS] [-t SECONDS]
 
-RESULT="$(tftp $HOST -c get $FILE /dev/null 2>&1 | head -n 1)"
-case "$RESULT" in
-    "")
-        echo "OK - got file $FILE from server $HOST"
-        exit $STATE_OK
-    ;;
-    *"Error code 1: File not found")
-            echo " WARN - File $FILE not found but server $HOST seems running";
-            exit $STATE_WARNING
-    ;;
-    *)
-        echo "CRITICAL - $RESULT"
-        exit $STATE_CRITICAL
-    ;;
-esac
+Downloads a file from a TFTP server with the tftp-hpa client.
+OK when the file is served, WARNING when the server answers with an error
+(e.g. file not found), CRITICAL when it does not answer.
+
+-H HOST     TFTP server (default localhost)
+-p PORT     UDP port of the server (default 69)
+-4          use IPv4 only
+-6          use IPv6 only
+-f FILE     file to download (default pxelinux.0)
+-s BYTES    CRITICAL if the file is smaller than this
+-w SECONDS  WARNING if the download takes longer than this
+-c SECONDS  CRITICAL if the download takes longer than this
+-t SECONDS  give up after this many seconds (default 10)
+-V          show the version
+-h          show this help
+EOF
 }
+
+unknown()
+{
+    echo "TFTP UNKNOWN - $1"
+    exit $STATE_UNKNOWN
+}
+
+is_seconds()
+{
+    [[ $1 =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]]
+}
+
+# greater A B: true if the decimal number A is greater than B
+greater()
+{
+    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'
+}
+
+while getopts ":hVH:p:46f:s:w:c:t:" OPTION
+do
+    case $OPTION in
+        h) usage
+           exit $STATE_UNKNOWN
+           ;;
+        V) echo "check_tftp $VERSION"
+           exit $STATE_UNKNOWN
+           ;;
+        H) HOST=$OPTARG
+           ;;
+        p) PORT=$OPTARG
+           ;;
+        4|6) IP_VERSION=-$OPTION
+           ;;
+        f) FILE=$OPTARG
+           ;;
+        s) MIN_SIZE=$OPTARG
+           ;;
+        w) WARN_TIME=$OPTARG
+           ;;
+        c) CRIT_TIME=$OPTARG
+           ;;
+        t) TIMEOUT=$OPTARG
+           ;;
+        :) unknown "option -$OPTARG needs an argument"
+           ;;
+        ?) unknown "unknown option -$OPTARG"
+           ;;
+    esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || unknown "unexpected argument $1"
+[ -n "$HOST" ] || unknown "the host must not be empty"
+[ -n "$FILE" ] || unknown "the file must not be empty"
+if [ -n "$PORT" ]; then
+    [[ $PORT =~ ^[1-9][0-9]*$ ]] && [ "$PORT" -le 65535 ] || unknown "the port must be 1 to 65535, not '$PORT'"
+fi
+[[ $TIMEOUT =~ ^[1-9][0-9]*$ ]] || unknown "the timeout must be a positive number of seconds, not '$TIMEOUT'"
+[ -z "$WARN_TIME" ] || is_seconds "$WARN_TIME" || unknown "-w must be a number of seconds, not '$WARN_TIME'"
+[ -z "$CRIT_TIME" ] || is_seconds "$CRIT_TIME" || unknown "-c must be a number of seconds, not '$CRIT_TIME'"
+[ -z "$MIN_SIZE" ] || [[ $MIN_SIZE =~ ^[0-9]+$ ]] || unknown "-s must be a number of bytes, not '$MIN_SIZE'"
+command -v tftp > /dev/null || unknown "tftp not found, install tftp-hpa"
+command -v timeout > /dev/null || unknown "timeout not found, install coreutils"
+
+SERVER=$HOST
+[ -z "$PORT" ] || SERVER="$HOST port $PORT"
+
+WORKDIR=$(mktemp -d) || unknown "cannot create a temporary directory"
+trap 'rm -rf "$WORKDIR"' EXIT
+LOCAL="$WORKDIR/download"
+
+# -l: a colon in the file name is part of it, not host:file
+ARGS=(-l)
+[ -z "$IP_VERSION" ] || ARGS+=("$IP_VERSION")
+ARGS+=("$HOST")
+[ -z "$PORT" ] || ARGS+=("$PORT")
+
+# tftp-hpa retries for 25s by default; stop it earlier, before the check itself times out
+START=$EPOCHREALTIME
+RESULT=$(timeout "$TIMEOUT" tftp "${ARGS[@]}" -c get "$FILE" "$LOCAL" 2>&1)
+RC=$?
+END=$EPOCHREALTIME
+LINE=$(grep -m 1 . <<< "$RESULT")
+
+if [ $RC -eq 124 ]; then
+    echo "TFTP CRITICAL - no answer from $SERVER within ${TIMEOUT}s"
+    exit $STATE_CRITICAL
+fi
+
+case "$LINE" in
+    *"Error code 1: "*)
+        echo "TFTP WARNING - $FILE not found on $SERVER, but the server answers"
+        exit $STATE_WARNING
+        ;;
+    *"Error code "[0-9]*": "*)
+        echo "TFTP WARNING - $SERVER answers, but cannot serve $FILE: ${LINE#*Error code }"
+        exit $STATE_WARNING
+        ;;
+    "")
+        if [ $RC -ne 0 ] || ! [ -f "$LOCAL" ]; then
+            echo "TFTP CRITICAL - tftp exited with status $RC without getting $FILE from $SERVER"
+            exit $STATE_CRITICAL
+        fi
+        ;;
+    *)
+        echo "TFTP CRITICAL - $LINE"
+        exit $STATE_CRITICAL
+        ;;
+esac
+
+SIZE=$(stat -c %s "$LOCAL")
+TIME=$(awk -v s="$START" -v e="$END" 'BEGIN { printf "%.3f", e - s }')
+STATE=$STATE_OK
+PROBLEMS=""
+if [ -n "$MIN_SIZE" ] && [ "$SIZE" -lt "$MIN_SIZE" ]; then
+    STATE=$STATE_CRITICAL
+    PROBLEMS="only $SIZE bytes, expected at least $MIN_SIZE; "
+fi
+if [ -n "$CRIT_TIME" ] && greater "$TIME" "$CRIT_TIME"; then
+    STATE=$STATE_CRITICAL
+    PROBLEMS+="download took ${TIME}s, more than ${CRIT_TIME}s; "
+elif [ -n "$WARN_TIME" ] && greater "$TIME" "$WARN_TIME"; then
+    [ $STATE -eq $STATE_CRITICAL ] || STATE=$STATE_WARNING
+    PROBLEMS+="download took ${TIME}s, more than ${WARN_TIME}s; "
+fi
+
+case $STATE in
+    $STATE_OK) TEXT=OK ;;
+    $STATE_WARNING) TEXT=WARNING ;;
+    *) TEXT=CRITICAL ;;
+esac
+echo "TFTP $TEXT - ${PROBLEMS}got $FILE from $SERVER, $SIZE bytes in ${TIME}s|time=${TIME}s;$WARN_TIME;$CRIT_TIME;0 size=${SIZE}B;;${MIN_SIZE:+$MIN_SIZE:};0"
+exit $STATE

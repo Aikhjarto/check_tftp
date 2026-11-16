@@ -4,7 +4,7 @@
 # Copyright (C) 2015-2026 Thomas Wagner <wagner-thomas@gmx.at>
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-VERSION=0.1.1
+VERSION=0.1.2
 
 # a dot as the decimal separator of $EPOCHREALTIME and in the output
 export LC_ALL=C
@@ -116,7 +116,8 @@ trap 'rm -rf "$WORKDIR"' EXIT
 LOCAL="$WORKDIR/download"
 
 # -l: a colon in the file name is part of it, not host:file
-ARGS=(-l)
+# -m octet: tftp-hpa defaults to netascii, which converts line ends and alters binary files
+ARGS=(-l -m octet)
 [ -z "$IP_VERSION" ] || ARGS+=("$IP_VERSION")
 ARGS+=("$HOST")
 [ -z "$PORT" ] || ARGS+=("$PORT")

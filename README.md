@@ -32,7 +32,9 @@ TFTP OK - got pxelinux.0 from pxe.example.com, 42392 bytes in 0.021s|time=0.021s
 | CRITICAL | No answer within `-t` or tftp gave up, the host is unknown, the file is smaller than `-s`, or the download was slower than `-c` |
 | UNKNOWN | Invalid command line, or tftp is not installed |
 
-The download time and the file size go into the performance data.
+The download time and the file size go into the performance data. The file is
+downloaded in binary (octet) mode, so its size is the size on the server;
+tftp-hpa's default netascii mode would convert line ends.
 
 tftp-hpa retries for 25 seconds before it gives up on a server that does not
 answer, longer than the usual timeout of a check. So `-t` stops it after 10

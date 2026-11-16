@@ -13,7 +13,13 @@ printf '%s\n' "$@" > "${FAKE_LOG:-/dev/null}"
 local=${@: -1}
 [ -z "$FAKE_SLEEP" ] || sleep "$FAKE_SLEEP"
 case "${FAKE_MODE:-ok}" in
-	ok) head -c "${FAKE_SIZE:-1000}" /dev/zero > "$local" ;;
+	ok)
+		# like a netascii transfer of a binary file, which gets CR added before LF
+		if [[ " $* " == *" -m octet "* ]]; then
+			head -c "${FAKE_SIZE:-1000}" /dev/zero > "$local"
+		else
+			head -c "${FAKE_SIZE:-1000}" /dev/zero | tr '\0' '\n' | sed 's/$/\r/' > "$local"
+		fi ;;
 	notfound) : > "$local"; echo "Error code 1: File not found" >&2 ;;
 	access) : > "$local"; echo "Error code 2: Access violation" >&2 ;;
 	resolve) echo "tftp: nosuch.invalid: Name or service not known" >&2; exit 1 ;;
@@ -67,21 +73,21 @@ expect_args(){
 }
 
 expect "file served" 0 '^TFTP OK - got pxelinux\.0 from localhost, 1000 bytes in [0-9]+\.[0-9]{3}s\|time=[0-9.]+s;;;0 size=1000B;;;0$' --
-expect_args "default arguments" "$(printf '%s\n' -l localhost -c get pxelinux.0)"
+expect_args "default arguments" "$(printf '%s\n' -l -m octet localhost -c get pxelinux.0)"
 expect "empty file" 0 '^TFTP OK - got pxelinux\.0 from localhost, 0 bytes' FAKE_SIZE=0 --
 
 expect "host, port and file" 0 '^TFTP OK - got boot/grub\.efi from pxe\.example\.com port 6969, ' -- \
 	-H pxe.example.com -p 6969 -f boot/grub.efi
-expect_args "port after the host" "$(printf '%s\n' -l pxe.example.com 6969 -c get boot/grub.efi)"
+expect_args "port after the host" "$(printf '%s\n' -l -m octet pxe.example.com 6969 -c get boot/grub.efi)"
 expect "IPv6" 0 '^TFTP OK' -- -6 -H ::1
-expect_args "-6 before the host" "$(printf '%s\n' -l -6 ::1 -c get pxelinux.0)"
+expect_args "-6 before the host" "$(printf '%s\n' -l -m octet -6 ::1 -c get pxelinux.0)"
 expect "IPv4" 0 '^TFTP OK' -- -4
-expect_args "-4 before the host" "$(printf '%s\n' -l -4 localhost -c get pxelinux.0)"
+expect_args "-4 before the host" "$(printf '%s\n' -l -m octet -4 localhost -c get pxelinux.0)"
 expect "file name with blank and glob" 0 '^TFTP OK - got a \*\.0 from localhost' -- -f 'a *.0'
-expect_args "file name passed as one argument" "$(printf '%s\n' -l localhost -c get 'a *.0')"
+expect_args "file name passed as one argument" "$(printf '%s\n' -l -m octet localhost -c get 'a *.0')"
 
 expect "colon in the file name" 0 '^TFTP OK - got C:\\boot\\pxe\.0 from localhost' -- -f 'C:\boot\pxe.0'
-expect_args "colon taken literally" "$(printf '%s\n' -l localhost -c get 'C:\boot\pxe.0')"
+expect_args "colon taken literally" "$(printf '%s\n' -l -m octet localhost -c get 'C:\boot\pxe.0')"
 
 expect "file not found" 1 '^TFTP WARNING - pxelinux\.0 not found on localhost, but the server answers$' FAKE_MODE=notfound --
 expect "other TFTP error" 1 '^TFTP WARNING - localhost answers, but cannot serve pxelinux\.0: 2: Access violation$' FAKE_MODE=access --
@@ -121,7 +127,7 @@ expect "bad port" 3 "^TFTP UNKNOWN - the port must be 1 to 65535, not '70000'$" 
 expect "bad timeout" 3 "^TFTP UNKNOWN - the timeout must be a positive number of seconds, not '0'$" -- -t 0
 expect "bad -w" 3 "^TFTP UNKNOWN - -w must be a number of seconds, not 'x'$" -- -w x
 expect "bad -s" 3 "^TFTP UNKNOWN - -s must be a number of bytes, not '1k'$" -- -s 1k
-expect "version" 3 '^check_tftp 0\.1\.1$' -- -V
+expect "version" 3 '^check_tftp 0\.1\.2$' -- -V
 
 TESTS=$((TESTS + 1))
 if "$CHECK" -h | grep -q '^Usage: check_tftp'; then echo "ok   help"; else FAILURES=$((FAILURES + 1)); echo "FAIL help"; fi

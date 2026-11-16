@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+
+# string for help text
+usage()
+{
+cat << EOF
+usage:
+This script reads a file from a tftp server. Returns OK, when file is found; return WARNING when file is not found but tftp server is up; return CRITICAL if tftp server is not reachable.
+OPTIONS:
+ -h	Show this message
+ -H	hostname (default localhost)
+ -f	filename (default pxelinux.0)
+EOF
+}
+
+# nagios expects one of these as return values
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+STATE_DEPENDENT=4
+
+# set default values
+HOST="localhost"
+FILE="pxelinux.0"
+
+# override default values with input arguments
+while getopts ":hH:f:" OPTION
+do
+  case $OPTION in
+	h) usage
+	   exit $STATE_UNKNOWN # nothing checked, but feasible input
+	   ;;
+	H) HOST=$OPTARG
+	   ;;
+	f) FILE=$OPTARG
+	   ;;
+	?) echo "unknown parameter" 
+	   usage
+	   exit $STATE_UNKNOWN
+ 	   ;;
+  esac
+done                                
+
+RESULT="$(tftp $HOST -c get $FILE /dev/null 2>&1 | head -n 1)"
+case "$RESULT" in
+    "")
+        echo "OK - got file $FILE from server $HOST"
+        exit $STATE_OK
+    ;;
+    *"Error code 1: File not found")
+            echo " WARN - File $FILE not found but server $HOST seems running";
+            exit $STATE_WARNING
+    ;;
+    *)
+        echo "CRITICAL - $RESULT"
+        exit $STATE_CRITICAL
+    ;;
+esac
+}
